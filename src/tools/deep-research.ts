@@ -75,6 +75,18 @@ function tryParseJSON<T>(text: string): T | null {
   }
 }
 
+/** Strip bulky content from findings before saving checkpoint JSON. */
+function stripContentForCheckpoint(state: CheckpointState): CheckpointState {
+  const clean = { ...state };
+  if (clean.findings) {
+    clean.findings = clean.findings.map(({ content: _content, ...rest }) => rest);
+  }
+  if (clean.allFindings) {
+    clean.allFindings = clean.allFindings.map(({ content: _content, ...rest }) => rest);
+  }
+  return clean;
+}
+
 export function registerDeepResearchTool(
   server: McpServer,
   llmService: LLMService,
@@ -90,8 +102,9 @@ export function registerDeepResearchTool(
       topic: z.string().describe('The research topic or question'),
       depth: z.enum(['quick', 'standard', 'deep']).optional().default('standard').describe('Research depth: quick (fewer searches), standard, or deep (more thorough)'),
       sessionId: z.string().uuid().optional().describe('Optional session ID to resume a previously interrupted research session'),
+      verbose: z.boolean().optional().default(false).describe('When true, send detailed progress logs for each sub-step'),
     },
-    async ({ topic, depth, sessionId }, extra) => {
+    async ({ topic, depth, sessionId, verbose }, extra) => {
       const isResume = !!sessionId;
       let state: CheckpointState;
 
@@ -144,9 +157,16 @@ export function registerDeepResearchTool(
           state.subQuestions = await decomposeTopic(llmService, topic, depth);
           log.info('Decomposition complete', { subQuestionCount: state.subQuestions.length });
           await sendLog(server, 'info', 'Decomposition complete', { subQuestionCount: state.subQuestions.length });
+          if (verbose) {
+            for (const sq of state.subQuestions) {
+              await sendLog(server, 'debug', `Sub-question: ${sq.question}`, {
+                searchQueries: sq.searchQueries,
+              });
+            }
+          }
           state.lastCompletedStep = 1;
           state.visitedUrls = [...visitedUrls];
-          await checkpointService.save(state.sessionId, state);
+          await checkpointService.save(state.sessionId, stripContentForCheckpoint(state));
         }
 
         // ── Step 2: Search for each sub-question ──
@@ -157,9 +177,18 @@ export function registerDeepResearchTool(
           state.searchResults = await searchForQuestions(llmService, searchService, state.subQuestions!);
           log.info('Search complete', { totalResults: state.searchResults.length });
           await sendLog(server, 'info', 'Search complete', { totalResults: state.searchResults.length });
+          if (verbose) {
+            const byQuestion = new Map<string, number>();
+            for (const hit of state.searchResults) {
+              byQuestion.set(hit.question, (byQuestion.get(hit.question) || 0) + 1);
+            }
+            for (const [question, count] of byQuestion) {
+              await sendLog(server, 'debug', `Search results for "${question}": ${count} hits`);
+            }
+          }
           state.lastCompletedStep = 2;
           state.visitedUrls = [...visitedUrls];
-          await checkpointService.save(state.sessionId, state);
+          await checkpointService.save(state.sessionId, stripContentForCheckpoint(state));
         }
 
         // ── Step 3: Extract content from top pages ──
@@ -172,9 +201,20 @@ export function registerDeepResearchTool(
           );
           log.info('Extraction complete', { findingsCount: state.findings.length });
           await sendLog(server, 'info', 'Extraction complete', { findingsCount: state.findings.length });
+          for (const finding of state.findings) {
+            if (finding.content) {
+              await checkpointService.saveSource(state.sessionId, finding.url, finding.title, finding.content);
+            }
+            if (verbose) {
+              await sendLog(server, 'debug', `Extracted: ${finding.title}`, {
+                url: finding.url,
+                factsCount: finding.facts.length,
+              });
+            }
+          }
           state.lastCompletedStep = 3;
           state.visitedUrls = [...visitedUrls];
-          await checkpointService.save(state.sessionId, state);
+          await checkpointService.save(state.sessionId, stripContentForCheckpoint(state));
         }
 
         // ── Step 4: Cross-reference findings ──
@@ -185,9 +225,15 @@ export function registerDeepResearchTool(
           state.analysis = await crossReference(llmService, topic, state.findings!);
           log.info('Cross-reference complete');
           await sendLog(server, 'info', 'Cross-reference complete');
+          if (verbose) {
+            const preview = state.analysis!.split('\n').filter(l => l.trim()).slice(0, 5).join(' | ');
+            await sendLog(server, 'debug', 'Cross-reference summary', {
+              analysisPreview: preview.slice(0, 300),
+            });
+          }
           state.lastCompletedStep = 4;
           state.visitedUrls = [...visitedUrls];
-          await checkpointService.save(state.sessionId, state);
+          await checkpointService.save(state.sessionId, stripContentForCheckpoint(state));
         }
 
         // ── Step 5: Fill gaps ──
@@ -198,12 +244,26 @@ export function registerDeepResearchTool(
           state.allFindings = await fillGaps(
             llmService, searchService, browserService, contentExtractor,
             topic, state.findings!, state.analysis!, visitedUrls, depth,
+            verbose ? async (round, queries, newUrls) => {
+              await sendLog(server, 'debug', `Gap-fill round ${round}`, {
+                queries,
+                newUrlsFound: newUrls.length,
+                newUrls,
+              });
+            } : undefined,
           );
           log.info('Gap-filling complete', { totalFindings: state.allFindings.length });
           await sendLog(server, 'info', 'Gap-filling complete', { totalFindings: state.allFindings.length });
+          // Persist sources for new findings from gap-filling
+          const existingUrls = new Set(state.findings!.map(f => f.url));
+          for (const finding of state.allFindings) {
+            if (finding.content && !existingUrls.has(finding.url)) {
+              await checkpointService.saveSource(state.sessionId, finding.url, finding.title, finding.content);
+            }
+          }
           state.lastCompletedStep = 5;
           state.visitedUrls = [...visitedUrls];
-          await checkpointService.save(state.sessionId, state);
+          await checkpointService.save(state.sessionId, stripContentForCheckpoint(state));
         }
 
         // ── Step 6: Synthesize report ──
@@ -213,14 +273,32 @@ export function registerDeepResearchTool(
           await sendLog(server, 'info', `Step 6: Synthesizing report from ${state.allFindings!.length} findings`);
           state.report = await synthesizeReport(llmService, topic, state.allFindings!, state.analysis!);
           log.info('Report synthesized', { reportLength: state.report.length });
+          if (verbose) {
+            const citationMatches = state.report.match(/\[\d+\]/g);
+            const uniqueCitations = new Set(citationMatches || []);
+            await sendLog(server, 'debug', 'Report synthesized', {
+              reportLength: state.report.length,
+              sourcesCited: uniqueCitations.size,
+            });
+          }
           state.lastCompletedStep = 6;
           state.visitedUrls = [...visitedUrls];
-          await checkpointService.save(state.sessionId, state);
+          await checkpointService.save(state.sessionId, stripContentForCheckpoint(state));
         }
 
         // ── Step 7: Done ──
         const durationMs = Date.now() - overallStart;
         await sendProgress(extra, 7, 'Research complete');
+
+        // Persist report to disk
+        const reportPath = await checkpointService.saveReport(state.sessionId, state.report!, {
+          topic,
+          depth,
+          createdAt: state.createdAt,
+          sourcesCount: state.allFindings!.length,
+          pagesVisited: visitedUrls.size,
+        });
+
         await sendLog(server, 'info', 'Deep research complete', {
           topic,
           depth,
@@ -228,6 +306,7 @@ export function registerDeepResearchTool(
           findingsCount: state.allFindings!.length,
           pagesVisited: visitedUrls.size,
           durationMs,
+          reportPath,
         });
 
         log.info('Deep research complete', {
@@ -237,13 +316,14 @@ export function registerDeepResearchTool(
           findingsCount: state.allFindings!.length,
           pagesVisited: visitedUrls.size,
           durationMs,
+          reportPath,
         });
 
-        // Clean up checkpoint on success
+        // Clean up checkpoint JSON on success (sources dir and report persist)
         await checkpointService.delete(state.sessionId);
 
         return {
-          content: [{ type: 'text' as const, text: `${state.report}\n\n<!-- sessionId: ${state.sessionId} -->` }],
+          content: [{ type: 'text' as const, text: `${state.report}\n\n<!-- sessionId: ${state.sessionId} | reportPath: ${reportPath} -->` }],
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -254,7 +334,7 @@ export function registerDeepResearchTool(
         // Save current state so user can resume
         try {
           state.visitedUrls = [...visitedUrls];
-          await checkpointService.save(state.sessionId, state);
+          await checkpointService.save(state.sessionId, stripContentForCheckpoint(state));
         } catch (saveErr) {
           log.error('Failed to save checkpoint on error', {
             sessionId: state.sessionId,
@@ -377,10 +457,10 @@ Respond in JSON format:
 
       const facts = tryParseJSON<string[]>(extraction.content);
       if (facts && Array.isArray(facts) && facts.length > 0) {
-        findings.push({ url: hit.url, title: hit.title, facts });
+        findings.push({ url: hit.url, title: hit.title, facts, content: markdown });
       } else {
         // Fallback: use the LLM response as a single fact
-        findings.push({ url: hit.url, title: hit.title, facts: [extraction.content.slice(0, 500)] });
+        findings.push({ url: hit.url, title: hit.title, facts: [extraction.content.slice(0, 500)], content: markdown });
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -425,6 +505,7 @@ async function fillGaps(
   analysis: string,
   visitedUrls: Set<string>,
   depth: Depth,
+  onRoundComplete?: (round: number, queries: string[], newUrls: string[]) => Promise<void>,
 ): Promise<Finding[]> {
   const allFindings = [...existingFindings];
   const maxRounds = MAX_GAP_ROUNDS[depth];
@@ -466,6 +547,10 @@ Respond in JSON format:
     if (gapHits.length === 0) {
       log.info('No new URLs from gap search, stopping');
       break;
+    }
+
+    if (onRoundComplete) {
+      await onRoundComplete(round + 1, queries, gapHits.map(h => h.url));
     }
 
     const newFindings = await extractFindings(

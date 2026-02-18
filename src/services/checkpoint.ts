@@ -1,4 +1,5 @@
 import { promises as fs } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import type { CheckpointState } from '../types/research.js';
@@ -73,6 +74,54 @@ export class CheckpointService {
     } catch {
       // File may already be gone — that's fine
     }
+  }
+
+  /** Save a source page's extracted markdown to disk. */
+  async saveSource(sessionId: string, url: string, title: string, markdown: string): Promise<void> {
+    this.validateId(sessionId);
+    const sourcesDir = path.join(this.dir, sessionId, 'sources');
+    await fs.mkdir(sourcesDir, { recursive: true });
+
+    const hash = createHash('sha256').update(url).digest('hex').slice(0, 16);
+    const frontmatter = [
+      '---',
+      `url: ${url}`,
+      `title: "${title.replace(/"/g, '\\"')}"`,
+      `fetchedAt: ${new Date().toISOString()}`,
+      '---',
+      '',
+    ].join('\n');
+
+    await fs.writeFile(path.join(sourcesDir, `${hash}.md`), frontmatter + markdown, 'utf-8');
+    log.debug('Source saved', { sessionId, url });
+  }
+
+  /** Save the final report to disk. Returns the file path. */
+  async saveReport(
+    sessionId: string,
+    report: string,
+    metadata: { topic: string; depth: string; createdAt: string; sourcesCount: number; pagesVisited: number },
+  ): Promise<string> {
+    this.validateId(sessionId);
+    const sessionDir = path.join(this.dir, sessionId);
+    await fs.mkdir(sessionDir, { recursive: true });
+
+    const reportPath = path.join(sessionDir, 'report.md');
+    const frontmatter = [
+      '---',
+      `topic: "${metadata.topic.replace(/"/g, '\\"')}"`,
+      `depth: ${metadata.depth}`,
+      `sessionId: ${sessionId}`,
+      `createdAt: ${metadata.createdAt}`,
+      `sourcesCount: ${metadata.sourcesCount}`,
+      `pagesVisited: ${metadata.pagesVisited}`,
+      '---',
+      '',
+    ].join('\n');
+
+    await fs.writeFile(reportPath, frontmatter + report, 'utf-8');
+    log.info('Report saved', { sessionId, path: reportPath });
+    return reportPath;
   }
 
   private filePath(sessionId: string): string {

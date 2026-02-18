@@ -14,6 +14,7 @@ export interface Finding {
   url: string;
   title: string;
   facts: string[];
+  content?: string;
 }
 
 export interface CheckpointState {
