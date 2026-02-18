@@ -19,14 +19,24 @@ async function main(): Promise<void> {
   });
 
   const server = createServer();
+
+  // Initialize LLM service if configured
+  const { llmService } = getServices();
+  if (llmService) {
+    await llmService.initialize();
+  }
+
   const transport = new StdioServerTransport();
 
   const cleanup = async () => {
     log.info('Shutting down...');
     try {
-      const { browserService } = getServices();
-      await browserService.close();
-      log.info('Browser closed, exiting');
+      const services = getServices();
+      if (services.llmService) {
+        await services.llmService.dispose();
+      }
+      await services.browserService.close();
+      log.info('Cleanup complete, exiting');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       log.error('Error during cleanup', { error: message });
