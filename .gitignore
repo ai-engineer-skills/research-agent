@@ -12,6 +12,9 @@ dist/
 .vscode/
 .idea/
 
+# MCP config (contains tokens)
+.mcp.json
+
 # OS
 .DS_Store
 Thumbs.db

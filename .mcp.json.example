@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "deep-research": {
+      "command": "node",
+      "args": ["C:/src/deep-research-agent/dist/index.js"],
+      "env": {
+        "LLM_PROVIDER": "copilot",
+        "GITHUB_TOKEN": "<your-github-token>"
+      }
+    }
+  }
+}
