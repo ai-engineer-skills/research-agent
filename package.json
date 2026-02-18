@@ -1,10 +1,10 @@
 {
-  "name": "deep-research-agent",
+  "name": "research-agent",
   "version": "1.0.0",
-  "description": "Deep research agent MCP server — browser-based web search, content extraction, and report generation. No API keys required.",
+  "description": "Research agent MCP server — browser-based web search, content extraction, and report generation. No API keys required.",
   "main": "dist/index.js",
   "bin": {
-    "deep-research-agent": "dist/index.js"
+    "research-agent": "dist/index.js"
   },
   "type": "module",
   "scripts": {

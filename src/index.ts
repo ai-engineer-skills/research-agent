@@ -12,13 +12,17 @@ async function main(): Promise<void> {
     setLogLevel(envLevel as LogLevel);
   }
 
-  log.info('Starting Deep Research Agent MCP server', {
+  log.info('Starting Research Agent MCP server', {
     nodeVersion: process.version,
     pid: process.pid,
     logLevel: envLevel ?? 'info',
   });
 
   const server = createServer();
+
+  // Initialize checkpoint service (fail-fast on bad directory)
+  const { checkpointService } = getServices();
+  await checkpointService.initialize();
 
   // Initialize LLM service if configured
   const { llmService } = getServices();

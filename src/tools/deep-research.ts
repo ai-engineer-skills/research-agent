@@ -1,9 +1,14 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import type { ServerRequest, ServerNotification } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
+import { randomUUID } from 'node:crypto';
 import { LLMService } from '../services/llm-provider.js';
 import { SearchService } from '../services/search-engine.js';
 import { BrowserService } from '../services/browser.js';
 import { ContentExtractor } from '../services/content-extractor.js';
+import { CheckpointService } from '../services/checkpoint.js';
+import type { SubQuestion, SearchHit, Finding, CheckpointState } from '../types/research.js';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('tool:deep_research');
@@ -18,15 +23,45 @@ const MAX_GAP_ROUNDS: Record<Depth, number> = {
   deep: 3,
 };
 
-interface SubQuestion {
-  question: string;
-  searchQueries: string[];
+const TOTAL_STEPS = 7;
+
+type ToolExtra = RequestHandlerExtra<ServerRequest, ServerNotification>;
+
+/** Send an MCP progress notification if the client provided a progressToken. */
+async function sendProgress(
+  extra: ToolExtra,
+  step: number,
+  message: string,
+): Promise<void> {
+  const progressToken = extra._meta?.progressToken;
+  if (progressToken === undefined) return;
+  try {
+    await extra.sendNotification({
+      method: 'notifications/progress',
+      params: { progressToken, progress: step, total: TOTAL_STEPS, message },
+    });
+  } catch {
+    log.debug('Failed to send progress notification', { step, message });
+  }
 }
 
-interface Finding {
-  url: string;
-  title: string;
-  facts: string[];
+/** Send an MCP logging message for troubleshooting. */
+async function sendLog(
+  server: McpServer,
+  level: 'debug' | 'info' | 'warning' | 'error',
+  message: string,
+  data?: Record<string, unknown>,
+): Promise<void> {
+  try {
+    await server.sendLoggingMessage({
+      level,
+      logger: 'deep_research',
+      data: { message, ...data },
+    });
+  } catch {
+    // Logging failures should never break the research flow
+    log.debug('Failed to send MCP log message', { message });
+  }
 }
 
 function tryParseJSON<T>(text: string): T | null {
@@ -46,6 +81,7 @@ export function registerDeepResearchTool(
   searchService: SearchService,
   browserService: BrowserService,
   contentExtractor: ContentExtractor,
+  checkpointService: CheckpointService,
 ): void {
   server.tool(
     'deep_research',
@@ -53,64 +89,181 @@ export function registerDeepResearchTool(
     {
       topic: z.string().describe('The research topic or question'),
       depth: z.enum(['quick', 'standard', 'deep']).optional().default('standard').describe('Research depth: quick (fewer searches), standard, or deep (more thorough)'),
+      sessionId: z.string().uuid().optional().describe('Optional session ID to resume a previously interrupted research session'),
     },
-    async ({ topic, depth }) => {
-      log.info('Starting deep research', { topic, depth });
+    async ({ topic, depth, sessionId }, extra) => {
+      const isResume = !!sessionId;
+      let state: CheckpointState;
+
+      if (isResume) {
+        // Resume from checkpoint
+        const loaded = await checkpointService.load(sessionId!);
+        if (!loaded) {
+          return {
+            content: [{ type: 'text' as const, text: `No valid checkpoint found for session ${sessionId}. Start a fresh research session without a sessionId.` }],
+            isError: true,
+          };
+        }
+        if (loaded.topic !== topic) {
+          return {
+            content: [{ type: 'text' as const, text: `Topic mismatch: checkpoint has "${loaded.topic}" but request has "${topic}". Use the original topic or start a new session.` }],
+            isError: true,
+          };
+        }
+        state = loaded;
+        log.info('Resuming deep research', { sessionId, topic, depth, fromStep: state.lastCompletedStep + 1 });
+        await sendLog(server, 'info', 'Resuming deep research from checkpoint', {
+          sessionId, topic, depth, lastCompletedStep: state.lastCompletedStep,
+        });
+      } else {
+        // Fresh session
+        const newId = randomUUID();
+        state = {
+          version: 1,
+          sessionId: newId,
+          topic,
+          depth,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          lastCompletedStep: 0,
+          visitedUrls: [],
+        };
+        log.info('Starting deep research', { sessionId: newId, topic, depth });
+        await sendLog(server, 'info', 'Starting deep research', { sessionId: newId, topic, depth });
+      }
+
       const overallStart = Date.now();
-      const visitedUrls = new Set<string>();
+      const visitedUrls = new Set<string>(state.visitedUrls);
 
       try {
         // ── Step 1: Decompose topic into sub-questions ──
-        log.info('Step 1: Decomposing topic');
-        const subQuestions = await decomposeTopic(llmService, topic, depth);
-        log.info('Decomposition complete', { subQuestionCount: subQuestions.length });
+        if (state.lastCompletedStep < 1) {
+          log.info('Step 1: Decomposing topic');
+          await sendProgress(extra, 1, 'Decomposing topic into sub-questions');
+          await sendLog(server, 'info', 'Step 1: Decomposing topic into sub-questions');
+          state.subQuestions = await decomposeTopic(llmService, topic, depth);
+          log.info('Decomposition complete', { subQuestionCount: state.subQuestions.length });
+          await sendLog(server, 'info', 'Decomposition complete', { subQuestionCount: state.subQuestions.length });
+          state.lastCompletedStep = 1;
+          state.visitedUrls = [...visitedUrls];
+          await checkpointService.save(state.sessionId, state);
+        }
 
         // ── Step 2: Search for each sub-question ──
-        log.info('Step 2: Searching');
-        const searchResults = await searchForQuestions(llmService, searchService, subQuestions);
-        log.info('Search complete', { totalResults: searchResults.length });
+        if (state.lastCompletedStep < 2) {
+          log.info('Step 2: Searching');
+          await sendProgress(extra, 2, `Searching for ${state.subQuestions!.length} sub-questions`);
+          await sendLog(server, 'info', `Step 2: Searching for ${state.subQuestions!.length} sub-questions`);
+          state.searchResults = await searchForQuestions(llmService, searchService, state.subQuestions!);
+          log.info('Search complete', { totalResults: state.searchResults.length });
+          await sendLog(server, 'info', 'Search complete', { totalResults: state.searchResults.length });
+          state.lastCompletedStep = 2;
+          state.visitedUrls = [...visitedUrls];
+          await checkpointService.save(state.sessionId, state);
+        }
 
         // ── Step 3: Extract content from top pages ──
-        log.info('Step 3: Extracting content');
-        const findings = await extractFindings(
-          llmService, browserService, contentExtractor, searchResults, visitedUrls, depth,
-        );
-        log.info('Extraction complete', { findingsCount: findings.length });
+        if (state.lastCompletedStep < 3) {
+          log.info('Step 3: Extracting content');
+          await sendProgress(extra, 3, `Extracting content from ${state.searchResults!.length} results`);
+          await sendLog(server, 'info', `Step 3: Extracting content from ${state.searchResults!.length} search results`);
+          state.findings = await extractFindings(
+            llmService, browserService, contentExtractor, state.searchResults!, visitedUrls, depth,
+          );
+          log.info('Extraction complete', { findingsCount: state.findings.length });
+          await sendLog(server, 'info', 'Extraction complete', { findingsCount: state.findings.length });
+          state.lastCompletedStep = 3;
+          state.visitedUrls = [...visitedUrls];
+          await checkpointService.save(state.sessionId, state);
+        }
 
         // ── Step 4: Cross-reference findings ──
-        log.info('Step 4: Cross-referencing');
-        const analysis = await crossReference(llmService, topic, findings);
-        log.info('Cross-reference complete');
+        if (state.lastCompletedStep < 4) {
+          log.info('Step 4: Cross-referencing');
+          await sendProgress(extra, 4, `Cross-referencing ${state.findings!.length} findings`);
+          await sendLog(server, 'info', `Step 4: Cross-referencing ${state.findings!.length} findings`);
+          state.analysis = await crossReference(llmService, topic, state.findings!);
+          log.info('Cross-reference complete');
+          await sendLog(server, 'info', 'Cross-reference complete');
+          state.lastCompletedStep = 4;
+          state.visitedUrls = [...visitedUrls];
+          await checkpointService.save(state.sessionId, state);
+        }
 
         // ── Step 5: Fill gaps ──
-        log.info('Step 5: Filling gaps');
-        const allFindings = await fillGaps(
-          llmService, searchService, browserService, contentExtractor,
-          topic, findings, analysis, visitedUrls, depth,
-        );
-        log.info('Gap-filling complete', { totalFindings: allFindings.length });
+        if (state.lastCompletedStep < 5) {
+          log.info('Step 5: Filling gaps');
+          await sendProgress(extra, 5, 'Filling knowledge gaps with additional searches');
+          await sendLog(server, 'info', 'Step 5: Filling knowledge gaps');
+          state.allFindings = await fillGaps(
+            llmService, searchService, browserService, contentExtractor,
+            topic, state.findings!, state.analysis!, visitedUrls, depth,
+          );
+          log.info('Gap-filling complete', { totalFindings: state.allFindings.length });
+          await sendLog(server, 'info', 'Gap-filling complete', { totalFindings: state.allFindings.length });
+          state.lastCompletedStep = 5;
+          state.visitedUrls = [...visitedUrls];
+          await checkpointService.save(state.sessionId, state);
+        }
 
-        // ── Steps 6-7: Synthesize and produce final report ──
-        log.info('Steps 6-7: Synthesizing report');
-        const report = await synthesizeReport(llmService, topic, allFindings, analysis);
-        log.info('Report synthesized', { reportLength: report.length });
+        // ── Step 6: Synthesize report ──
+        if (state.lastCompletedStep < 6) {
+          log.info('Step 6: Synthesizing report');
+          await sendProgress(extra, 6, `Synthesizing report from ${state.allFindings!.length} findings`);
+          await sendLog(server, 'info', `Step 6: Synthesizing report from ${state.allFindings!.length} findings`);
+          state.report = await synthesizeReport(llmService, topic, state.allFindings!, state.analysis!);
+          log.info('Report synthesized', { reportLength: state.report.length });
+          state.lastCompletedStep = 6;
+          state.visitedUrls = [...visitedUrls];
+          await checkpointService.save(state.sessionId, state);
+        }
+
+        // ── Step 7: Done ──
+        const durationMs = Date.now() - overallStart;
+        await sendProgress(extra, 7, 'Research complete');
+        await sendLog(server, 'info', 'Deep research complete', {
+          topic,
+          depth,
+          sessionId: state.sessionId,
+          findingsCount: state.allFindings!.length,
+          pagesVisited: visitedUrls.size,
+          durationMs,
+        });
 
         log.info('Deep research complete', {
           topic,
           depth,
-          findingsCount: allFindings.length,
+          sessionId: state.sessionId,
+          findingsCount: state.allFindings!.length,
           pagesVisited: visitedUrls.size,
-          durationMs: Date.now() - overallStart,
+          durationMs,
         });
 
+        // Clean up checkpoint on success
+        await checkpointService.delete(state.sessionId);
+
         return {
-          content: [{ type: 'text' as const, text: report }],
+          content: [{ type: 'text' as const, text: `${state.report}\n\n<!-- sessionId: ${state.sessionId} -->` }],
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        log.error('Deep research failed', { topic, error: message, durationMs: Date.now() - overallStart });
+        const durationMs = Date.now() - overallStart;
+        log.error('Deep research failed', { topic, sessionId: state.sessionId, error: message, durationMs });
+        await sendLog(server, 'error', 'Deep research failed', { topic, sessionId: state.sessionId, error: message, durationMs });
+
+        // Save current state so user can resume
+        try {
+          state.visitedUrls = [...visitedUrls];
+          await checkpointService.save(state.sessionId, state);
+        } catch (saveErr) {
+          log.error('Failed to save checkpoint on error', {
+            sessionId: state.sessionId,
+            error: saveErr instanceof Error ? saveErr.message : String(saveErr),
+          });
+        }
+
         return {
-          content: [{ type: 'text' as const, text: `Deep research failed: ${message}` }],
+          content: [{ type: 'text' as const, text: `Deep research failed: ${message}\n\nYou can resume this session by passing sessionId: "${state.sessionId}" with the same topic.` }],
           isError: true,
         };
       }
@@ -144,13 +297,6 @@ Respond in JSON format:
 }
 
 // ── Step 2: Search ──
-
-interface SearchHit {
-  question: string;
-  title: string;
-  url: string;
-  snippet: string;
-}
 
 async function searchForQuestions(
   _llm: LLMService,

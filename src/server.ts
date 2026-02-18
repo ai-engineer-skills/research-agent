@@ -11,6 +11,7 @@ import { registerVisitPageTool } from './tools/visit-page.js';
 import { registerScreenshotTool } from './tools/take-screenshot.js';
 import { registerPageActionTools } from './tools/page-actions.js';
 import { registerDeepResearchTool } from './tools/deep-research.js';
+import { CheckpointService } from './services/checkpoint.js';
 import { registerResearchPrompts } from './prompts/research-workflow.js';
 import { createLogger } from './logger.js';
 
@@ -18,6 +19,7 @@ const log = createLogger('server');
 
 let browserService: BrowserService;
 let llmService: LLMService | null = null;
+let checkpointService: CheckpointService;
 
 function createLLMProvider(): LLMProvider | null {
   const provider = process.env.LLM_PROVIDER?.toLowerCase();
@@ -39,7 +41,7 @@ function createLLMProvider(): LLMProvider | null {
 
 export function createServer(): McpServer {
   const server = new McpServer({
-    name: 'deep-research-agent',
+    name: 'research-agent',
     version: '1.0.0',
   });
 
@@ -47,6 +49,7 @@ export function createServer(): McpServer {
   const searchEngine = new BingSearchEngine(browserService);
   const searchService = new SearchService(searchEngine);
   const contentExtractor = new ContentExtractor();
+  checkpointService = new CheckpointService(process.env.CHECKPOINT_DIR);
 
   registerWebSearchTool(server, searchService);
   registerVisitPageTool(server, browserService, contentExtractor);
@@ -58,7 +61,7 @@ export function createServer(): McpServer {
   const llmProvider = createLLMProvider();
   if (llmProvider) {
     llmService = new LLMService(llmProvider);
-    registerDeepResearchTool(server, llmService, searchService, browserService, contentExtractor);
+    registerDeepResearchTool(server, llmService, searchService, browserService, contentExtractor, checkpointService);
     log.info('deep_research tool registered', { llmProvider: llmProvider.name });
   } else {
     log.info('LLM_PROVIDER not set — deep_research tool not available');
@@ -67,6 +70,6 @@ export function createServer(): McpServer {
   return server;
 }
 
-export function getServices(): { browserService: BrowserService; llmService: LLMService | null } {
-  return { browserService, llmService };
+export function getServices(): { browserService: BrowserService; llmService: LLMService | null; checkpointService: CheckpointService } {
+  return { browserService, llmService, checkpointService };
 }
