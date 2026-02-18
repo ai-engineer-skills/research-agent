@@ -4,6 +4,10 @@ __pycache__/
 *.pyc
 .env
 
+# Build
+dist/
+*.tsbuildinfo
+
 # IDE
 .vscode/
 .idea/

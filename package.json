@@ -1,0 +1,52 @@
+{
+  "name": "deep-research-agent",
+  "version": "1.0.0",
+  "description": "Deep research agent MCP server — browser-based web search, content extraction, and report generation. No API keys required.",
+  "main": "dist/index.js",
+  "bin": {
+    "deep-research-agent": "dist/index.js"
+  },
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsc --watch",
+    "prepare": "tsc",
+    "postinstall": "npx --yes playwright install chromium || echo Playwright install skipped"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "deep-research",
+    "web-search",
+    "browser-automation",
+    "playwright",
+    "copilot",
+    "claude-code",
+    "codex",
+    "ai-agent"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "@mozilla/readability": "^0.5.0",
+    "jsdom": "^26.0.0",
+    "playwright": "^1.52.0",
+    "turndown": "^7.2.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^27.0.0",
+    "@types/node": "^22.15.0",
+    "@types/turndown": "^5.0.5",
+    "typescript": "^5.8.3"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ]
+}
