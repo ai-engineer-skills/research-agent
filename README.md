@@ -12,12 +12,12 @@ Optionally, configure an LLM backend (GitHub Copilot SDK or any OpenAI-compatibl
 - 📄 **Full page content extraction** — JavaScript-rendered sites converted to clean Markdown via Readability + Turndown
 - 📸 **Screenshots** — capture full or viewport screenshots for visual analysis
 - 🖱️ **Interactive navigation** — click elements, fill forms, follow links
-- 🔌 **Replaceable search backend** — swap Bing for any search API by implementing the `SearchEngine` interface
+- 🔌 **Replaceable search backend** — swap Bing for any search API by implementing the `SearchEngine` interface from [agent-toolkit](https://github.com/ai-engineer-skills/agent-toolkit)
 - 🤖 **Works with any MCP-compatible AI assistant** — Copilot CLI, Claude Code, Codex, VS Code, and more
 - 📝 **Structured logging** — all operations logged to stderr with timestamps, durations, and error context
 - 🧩 **Research workflow prompt** — built-in `deep-research` prompt guides the host LLM through a complete multi-step research workflow
 - 🧠 **Autonomous deep research** — optional `deep_research` tool with built-in LLM runs the full research pipeline internally (decompose → search → extract → cross-reference → fill gaps → synthesize report)
-- 🔗 **Pluggable LLM backend** — GitHub Copilot SDK (uses your Copilot subscription) or any OpenAI-compatible API (OpenAI, GitHub Models, Azure, Anthropic, etc.)
+- 🔗 **Pluggable LLM backend** — GitHub Copilot SDK (uses your Copilot subscription) or any OpenAI-compatible API (OpenAI, GitHub Models, Azure, Anthropic, etc.) via [agent-toolkit](https://github.com/ai-engineer-skills/agent-toolkit)
 
 ## Design
 
@@ -40,7 +40,7 @@ When an **LLM backend is configured** (`LLM_PROVIDER` env var), the server also 
 │                                                            │
 │  Tools Layer          Services Layer                       │
 │  ┌──────────────┐    ┌──────────────────────────────────┐  │
-│  │ web_search   │───▶│ SearchService                    │  │
+│  │ web_search   │───▶│ SearchService (agent-toolkit)     │  │
 │  │ visit_page   │    │  └─ BingSearchEngine (default)   │  │
 │  │ screenshot   │───▶│  └─ DuckDuckGoEngine (alt)       │  │
 │  │ click_element│    │  └─ YourCustomEngine (plug in)   │  │
@@ -50,11 +50,11 @@ When an **LLM backend is configured** (`LLM_PROVIDER` env var), the server also 
 │  │              │    │ ContentExtractor                  │  │
 │  │ deep_research│    │  └─ Readability + Turndown        │  │
 │  │  (optional)  │───▶│  └─ JSDOM (quiet virtual console) │  │
-│  └──────────────┘    │ LLMService (optional)             │  │
+│  └──────────────┘    │ LLMService (agent-toolkit)        │  │
 │                      │  └─ CopilotLLMProvider            │  │
 │  Prompts Layer       │  └─ DirectAPILLMProvider          │  │
 │  ┌──────────────┐    └──────────────────────────────────┘  │
-│  │deep-research │    Logger (stderr, structured JSON)      │
+│  │deep-research │    Logger (agent-toolkit, stderr)        │
 │  └──────────────┘                                          │
 └────────────────────────────────────────────────────────────┘
            │
@@ -297,7 +297,6 @@ The prompt guides the assistant through a structured workflow:
 src/
 ├── index.ts                        # Entry point — stdio transport, lifecycle management
 ├── server.ts                       # MCP server wiring — creates services, registers tools/prompts
-├── logger.ts                       # Structured logger (stderr, level-based, JSON metadata)
 ├── tools/
 │   ├── web-search.ts               # web_search tool
 │   ├── visit-page.ts               # visit_page tool
@@ -308,15 +307,15 @@ src/
 │   └── research-workflow.ts        # deep-research prompt (7-step guided workflow for host LLM)
 └── services/
     ├── browser.ts                  # Playwright browser lifecycle + stealth settings
-    ├── search-engine.ts            # SearchEngine interface + SearchService wrapper
     ├── content-extractor.ts        # HTML → Markdown (Readability + Turndown + quiet JSDOM)
-    ├── llm-provider.ts             # LLMProvider interface + LLMService wrapper
-    ├── search-backends/
-    │   ├── bing.ts                 # Default — Bing search with URL redirect decoding
-    │   └── duckduckgo.ts           # Alternative — DuckDuckGo (may CAPTCHA in some environments)
-    └── llm-backends/
-        ├── direct-api.ts           # OpenAI-compatible REST API backend
-        └── copilot.ts              # GitHub Copilot SDK backend
+    ├── checkpoint.ts               # Research checkpoint/resume
+    └── search-backends/
+        ├── bing.ts                 # Default — Bing search with URL redirect decoding
+        └── duckduckgo.ts           # Alternative — DuckDuckGo (may CAPTCHA in some environments)
+
+# Shared infrastructure from agent-toolkit package:
+#   logger, LLMProvider, LLMService, SearchEngine, SearchService,
+#   CopilotLLMProvider, DirectAPILLMProvider
 ```
 
 ## Custom Search Backend
@@ -324,7 +323,7 @@ src/
 The search backend is replaceable. Implement the `SearchEngine` interface to use any search API:
 
 ```typescript
-import { SearchEngine, SearchResult } from './services/search-engine.js';
+import { SearchEngine, SearchResult } from 'agent-toolkit/services/search-engine';
 
 class MyCustomSearch implements SearchEngine {
   name = 'my-search';
@@ -354,7 +353,7 @@ const searchEngine = new MyCustomSearch();  // instead of BingSearchEngine
 The LLM backend is also replaceable. Implement the `LLMProvider` interface:
 
 ```typescript
-import { LLMProvider, LLMCompletionResult } from './services/llm-provider.js';
+import { LLMProvider, LLMCompletionResult } from 'agent-toolkit/services/llm-provider';
 
 class MyLLMProvider implements LLMProvider {
   name = 'my-llm';
@@ -432,7 +431,7 @@ npm start
 - **Node.js** ≥ 18
 - **Chromium** — auto-installed by Playwright during `npm install`
 - **For `deep_research` tool** — one of:
-  - GitHub Copilot subscription + `@github/copilot-sdk` (installed automatically as optional dependency)
+  - GitHub Copilot subscription + `@github/copilot-sdk` (available as optional dependency through [agent-toolkit](https://github.com/ai-engineer-skills/agent-toolkit))
   - Any OpenAI-compatible API key
 
 ## License

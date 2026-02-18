@@ -1,6 +1,6 @@
-import { SearchEngine, SearchResult } from '../search-engine.js';
+import { SearchEngine, SearchResult } from 'agent-toolkit/services/search-engine';
 import { BrowserService } from '../browser.js';
-import { createLogger } from '../../logger.js';
+import { createLogger } from 'agent-toolkit/logger';
 
 const log = createLogger('duckduckgo');
 

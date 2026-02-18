@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import { SearchService } from '../services/search-engine.js';
-import { createLogger } from '../logger.js';
+import { SearchService } from 'agent-toolkit/services/search-engine';
+import { createLogger } from 'agent-toolkit/logger';
 
 const log = createLogger('tool:web_search');
 

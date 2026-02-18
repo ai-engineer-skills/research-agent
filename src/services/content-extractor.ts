@@ -1,7 +1,7 @@
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import TurndownService from 'turndown';
-import { createLogger } from '../logger.js';
+import { createLogger } from 'agent-toolkit/logger';
 
 const log = createLogger('extractor');
 

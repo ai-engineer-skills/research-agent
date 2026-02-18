@@ -1,6 +1,6 @@
 import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import { randomUUID } from 'node:crypto';
-import { createLogger } from '../logger.js';
+import { createLogger } from 'agent-toolkit/logger';
 
 const log = createLogger('browser');
 

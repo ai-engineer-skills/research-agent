@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import path from 'node:path';
 import os from 'node:os';
 import type { CheckpointState } from '../types/research.js';
-import { createLogger } from '../logger.js';
+import { createLogger } from 'agent-toolkit/logger';
 
 const log = createLogger('checkpoint');
 

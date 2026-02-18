@@ -1,11 +1,11 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { BrowserService } from './services/browser.js';
-import { SearchService } from './services/search-engine.js';
+import { SearchService } from 'agent-toolkit/services/search-engine';
 import { BingSearchEngine } from './services/search-backends/bing.js';
 import { ContentExtractor } from './services/content-extractor.js';
-import { LLMService, type LLMProvider } from './services/llm-provider.js';
-import { DirectAPILLMProvider } from './services/llm-backends/direct-api.js';
-import { CopilotLLMProvider } from './services/llm-backends/copilot.js';
+import { LLMService, type LLMProvider } from 'agent-toolkit/services/llm-provider';
+import { DirectAPILLMProvider } from 'agent-toolkit/services/llm-backends/direct-api';
+import { CopilotLLMProvider } from 'agent-toolkit/services/llm-backends/copilot';
 import { registerWebSearchTool } from './tools/web-search.js';
 import { registerVisitPageTool } from './tools/visit-page.js';
 import { registerScreenshotTool } from './tools/take-screenshot.js';
@@ -13,7 +13,7 @@ import { registerPageActionTools } from './tools/page-actions.js';
 import { registerDeepResearchTool } from './tools/deep-research.js';
 import { CheckpointService } from './services/checkpoint.js';
 import { registerResearchPrompts } from './prompts/research-workflow.js';
-import { createLogger } from './logger.js';
+import { createLogger } from 'agent-toolkit/logger';
 
 const log = createLogger('server');
 

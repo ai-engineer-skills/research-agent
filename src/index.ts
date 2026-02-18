@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { createServer, getServices } from './server.js';
-import { setLogLevel, createLogger, type LogLevel } from './logger.js';
+import { setLogLevel, createLogger, type LogLevel } from 'agent-toolkit/logger';
 
 const log = createLogger('main');
 

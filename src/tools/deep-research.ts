@@ -3,13 +3,13 @@ import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/proto
 import type { ServerRequest, ServerNotification } from '@modelcontextprotocol/sdk/types.js';
 import { z } from 'zod';
 import { randomUUID } from 'node:crypto';
-import { LLMService } from '../services/llm-provider.js';
-import { SearchService } from '../services/search-engine.js';
+import { LLMService } from 'agent-toolkit/services/llm-provider';
+import { SearchService } from 'agent-toolkit/services/search-engine';
 import { BrowserService } from '../services/browser.js';
 import { ContentExtractor } from '../services/content-extractor.js';
 import { CheckpointService } from '../services/checkpoint.js';
 import type { SubQuestion, SearchHit, Finding, CheckpointState } from '../types/research.js';
-import { createLogger } from '../logger.js';
+import { createLogger } from 'agent-toolkit/logger';
 
 const log = createLogger('tool:deep_research');
 

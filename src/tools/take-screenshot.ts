@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { BrowserService } from '../services/browser.js';
-import { createLogger } from '../logger.js';
+import { createLogger } from 'agent-toolkit/logger';
 
 const log = createLogger('tool:screenshot');
 
