@@ -415,7 +415,7 @@ Bing may eventually start blocking headless browsers too. The replaceable backen
 
 ```bash
 git clone <repo-url>
-cd agent_mobile
+cd deep-research-agent
 npm install
 npm run build
 npm start
