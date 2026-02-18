@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { BrowserService } from './services/browser.js';
 import { SearchService } from './services/search-engine.js';
-import { DuckDuckGoSearchEngine } from './services/search-backends/duckduckgo.js';
+import { BingSearchEngine } from './services/search-backends/bing.js';
 import { ContentExtractor } from './services/content-extractor.js';
 import { registerWebSearchTool } from './tools/web-search.js';
 import { registerVisitPageTool } from './tools/visit-page.js';
@@ -18,7 +18,7 @@ export function createServer(): McpServer {
   });
 
   browserService = new BrowserService();
-  const searchEngine = new DuckDuckGoSearchEngine(browserService);
+  const searchEngine = new BingSearchEngine(browserService);
   const searchService = new SearchService(searchEngine);
   const contentExtractor = new ContentExtractor();
 

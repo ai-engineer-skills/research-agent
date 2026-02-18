@@ -1,9 +1,20 @@
-import { JSDOM } from 'jsdom';
+import { JSDOM, VirtualConsole } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import TurndownService from 'turndown';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('extractor');
+
+/** Create a JSDOM VirtualConsole that suppresses CSS parse errors (JSDOM doesn't support modern CSS). */
+function createQuietConsole(): VirtualConsole {
+  const virtualConsole = new VirtualConsole();
+  virtualConsole.on('error', (err: string) => {
+    // Suppress known JSDOM CSS limitation — these are harmless
+    if (typeof err === 'string' && err.includes('Could not parse CSS stylesheet')) return;
+    log.warn('JSDOM error', { error: err });
+  });
+  return virtualConsole;
+}
 
 export class ContentExtractor {
   private turndown: TurndownService;
@@ -17,7 +28,7 @@ export class ContentExtractor {
 
   extractMarkdown(html: string, url?: string, maxLength = 50000): string {
     try {
-      const dom = new JSDOM(html, { url });
+      const dom = new JSDOM(html, { url, virtualConsole: createQuietConsole() });
       const reader = new Readability(dom.window.document);
       const article = reader.parse();
 
@@ -47,7 +58,7 @@ export class ContentExtractor {
 
   extractLinks(html: string, baseUrl?: string): Array<{ text: string; href: string }> {
     try {
-      const dom = new JSDOM(html, { url: baseUrl });
+      const dom = new JSDOM(html, { url: baseUrl, virtualConsole: createQuietConsole() });
       const anchors = dom.window.document.querySelectorAll('a[href]');
       const links: Array<{ text: string; href: string }> = [];
 
@@ -78,7 +89,7 @@ export class ContentExtractor {
 
   extractMetadata(html: string): { title: string; description: string; author: string } {
     try {
-      const dom = new JSDOM(html);
+      const dom = new JSDOM(html, { virtualConsole: createQuietConsole() });
       const doc = dom.window.document;
 
       const title = doc.querySelector('title')?.textContent?.trim() ?? '';

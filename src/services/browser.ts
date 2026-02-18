@@ -1,26 +1,37 @@
-import { chromium, Browser, Page } from 'playwright';
+import { chromium, Browser, BrowserContext, Page } from 'playwright';
 import { randomUUID } from 'node:crypto';
 import { createLogger } from '../logger.js';
 
 const log = createLogger('browser');
 
+const DEFAULT_USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36';
+
 export interface BrowserServiceOptions {
   headless?: boolean;
+  userAgent?: string;
 }
 
 export class BrowserService {
   private browser: Browser | null = null;
+  private context: BrowserContext | null = null;
   private pages: Map<string, Page> = new Map();
   private headless: boolean;
+  private userAgent: string;
 
   constructor(options?: BrowserServiceOptions) {
     this.headless = options?.headless ?? true;
+    this.userAgent = options?.userAgent ?? DEFAULT_USER_AGENT;
   }
 
   async ensureBrowser(): Promise<void> {
     if (!this.browser || !this.browser.isConnected()) {
       log.info('Launching chromium browser', { headless: this.headless });
       this.browser = await chromium.launch({ headless: this.headless });
+      this.context = await this.browser.newContext({
+        userAgent: this.userAgent,
+        viewport: { width: 1280, height: 720 },
+        locale: 'en-US',
+      });
       log.info('Browser launched successfully');
     }
   }
@@ -28,7 +39,7 @@ export class BrowserService {
   async newPage(id?: string): Promise<string> {
     await this.ensureBrowser();
     const pageId = id ?? randomUUID();
-    const page = await this.browser!.newPage();
+    const page = await this.context!.newPage();
     this.pages.set(pageId, page);
     log.debug('New page created', { pageId });
     return pageId;
@@ -108,6 +119,7 @@ export class BrowserService {
     if (this.browser) {
       await this.browser.close();
       this.browser = null;
+      this.context = null;
       log.info('Browser closed');
     }
   }
