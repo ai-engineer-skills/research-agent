@@ -1,6 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import { SearchService } from '../services/search-engine.js';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('tool:web_search');
 
 export function registerWebSearchTool(server: McpServer, searchService: SearchService): void {
   server.tool(
@@ -11,10 +14,22 @@ export function registerWebSearchTool(server: McpServer, searchService: SearchSe
       num_results: z.number().optional().default(10).describe('Number of results to return (default 10)'),
     },
     async ({ query, num_results }) => {
-      const results = await searchService.search(query, num_results);
-      return {
-        content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
-      };
+      log.info('Executing web_search', { query, num_results });
+      const start = Date.now();
+      try {
+        const results = await searchService.search(query, num_results);
+        log.info('web_search complete', { query, resultsReturned: results.length, durationMs: Date.now() - start });
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }],
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        log.error('web_search failed', { query, error: message, durationMs: Date.now() - start });
+        return {
+          content: [{ type: 'text' as const, text: `Search failed: ${message}` }],
+          isError: true,
+        };
+      }
     },
   );
 }

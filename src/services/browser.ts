@@ -1,5 +1,8 @@
 import { chromium, Browser, Page } from 'playwright';
 import { randomUUID } from 'node:crypto';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('browser');
 
 export interface BrowserServiceOptions {
   headless?: boolean;
@@ -16,7 +19,9 @@ export class BrowserService {
 
   async ensureBrowser(): Promise<void> {
     if (!this.browser || !this.browser.isConnected()) {
+      log.info('Launching chromium browser', { headless: this.headless });
       this.browser = await chromium.launch({ headless: this.headless });
+      log.info('Browser launched successfully');
     }
   }
 
@@ -25,12 +30,14 @@ export class BrowserService {
     const pageId = id ?? randomUUID();
     const page = await this.browser!.newPage();
     this.pages.set(pageId, page);
+    log.debug('New page created', { pageId });
     return pageId;
   }
 
   async getPage(id: string): Promise<Page> {
     const page = this.pages.get(id);
     if (!page) {
+      log.error('Page not found', { pageId: id, activePages: this.pages.size });
       throw new Error(`Page not found: ${id}`);
     }
     return page;
@@ -42,7 +49,11 @@ export class BrowserService {
     options?: { waitUntil?: 'load' | 'domcontentloaded' | 'networkidle' },
   ): Promise<void> {
     const page = await this.getPage(pageId);
-    await page.goto(url, { waitUntil: options?.waitUntil ?? 'load' });
+    const waitUntil = options?.waitUntil ?? 'load';
+    log.info('Navigating', { pageId, url, waitUntil });
+    const start = Date.now();
+    await page.goto(url, { waitUntil });
+    log.info('Navigation complete', { pageId, url, durationMs: Date.now() - start });
   }
 
   async getContent(pageId: string): Promise<string> {
@@ -84,10 +95,12 @@ export class BrowserService {
     if (page) {
       await page.close();
       this.pages.delete(pageId);
+      log.debug('Page closed', { pageId });
     }
   }
 
   async close(): Promise<void> {
+    log.info('Closing browser', { activePages: this.pages.size });
     for (const [id, page] of this.pages) {
       await page.close();
       this.pages.delete(id);
@@ -95,6 +108,7 @@ export class BrowserService {
     if (this.browser) {
       await this.browser.close();
       this.browser = null;
+      log.info('Browser closed');
     }
   }
 

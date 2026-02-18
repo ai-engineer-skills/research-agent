@@ -1,5 +1,8 @@
 import { SearchEngine, SearchResult } from '../search-engine.js';
 import { BrowserService } from '../browser.js';
+import { createLogger } from '../../logger.js';
+
+const log = createLogger('duckduckgo');
 
 export class DuckDuckGoSearchEngine implements SearchEngine {
   public readonly name = 'duckduckgo';
@@ -10,6 +13,8 @@ export class DuckDuckGoSearchEngine implements SearchEngine {
   }
 
   async search(query: string, numResults = 10): Promise<SearchResult[]> {
+    log.info('Searching', { query, numResults });
+    const start = Date.now();
     const pageId = await this.browserService.newPage();
     try {
       await this.browserService.navigate(pageId, 'https://duckduckgo.com', {
@@ -28,9 +33,10 @@ export class DuckDuckGoSearchEngine implements SearchEngine {
         try {
           await page.waitForSelector(sel, { timeout: 10000 });
           matchedSelector = sel;
+          log.debug('Matched result selector', { selector: sel });
           break;
         } catch {
-          // selector not found, try next
+          log.debug('Selector not found, trying next', { selector: sel });
         }
       }
 
@@ -73,11 +79,16 @@ export class DuckDuckGoSearchEngine implements SearchEngine {
       }
 
       // Filter out empty results and limit
-      return results
+      const filtered = results
         .filter((r) => r.title && r.url)
         .slice(0, numResults);
+
+      log.info('Search complete', { query, resultsFound: filtered.length, durationMs: Date.now() - start });
+      return filtered;
     } catch (error) {
-      throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      log.error('Search failed', { query, error: message, durationMs: Date.now() - start });
+      throw new Error(`DuckDuckGo search failed for "${query}": ${message}`);
     } finally {
       await this.browserService.closePage(pageId);
     }

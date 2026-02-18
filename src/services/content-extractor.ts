@@ -1,6 +1,9 @@
 import { JSDOM } from 'jsdom';
 import { Readability } from '@mozilla/readability';
 import TurndownService from 'turndown';
+import { createLogger } from '../logger.js';
+
+const log = createLogger('extractor');
 
 export class ContentExtractor {
   private turndown: TurndownService;
@@ -21,18 +24,23 @@ export class ContentExtractor {
       let markdown: string;
       if (article && article.content) {
         markdown = this.turndown.turndown(article.content);
+        log.debug('Readability extraction succeeded', { url, titleFound: article.title ?? 'none', length: markdown.length });
       } else {
         // Fallback: extract body text
         const body = dom.window.document.body;
         markdown = body?.textContent?.trim() ?? '';
+        log.warn('Readability failed, falling back to body text', { url, length: markdown.length });
       }
 
       if (markdown.length > maxLength) {
+        log.debug('Content truncated', { url, originalLength: markdown.length, maxLength });
         markdown = markdown.slice(0, maxLength);
       }
 
       return markdown;
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.error('Markdown extraction failed', { url, error: message });
       return '';
     }
   }
@@ -61,7 +69,9 @@ export class ContentExtractor {
       }
 
       return links;
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.error('Link extraction failed', { baseUrl, error: message });
       return [];
     }
   }
@@ -84,7 +94,9 @@ export class ContentExtractor {
         '';
 
       return { title, description: descriptionMeta, author };
-    } catch {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.error('Metadata extraction failed', { error: message });
       return { title: '', description: '', author: '' };
     }
   }
