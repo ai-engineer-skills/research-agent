@@ -2,16 +2,72 @@
 
 > Browser-powered deep research agent for AI coding assistants. No API keys required.
 
-An [MCP](https://modelcontextprotocol.io/) server that gives any AI assistant the ability to search the web, read pages, take screenshots, and interact with sites — all through a real browser. Uses DuckDuckGo for search and Playwright for browser automation, so there are **zero API keys** to configure.
+An [MCP](https://modelcontextprotocol.io/) server that gives any AI assistant the ability to search the web, read pages, take screenshots, and interact with sites — all through a real browser. Uses Bing for search and Playwright for browser automation, so there are **zero API keys** to configure.
 
 ## Features
 
-- 🔍 **Browser-based web search** — DuckDuckGo via Playwright, no API keys needed
-- 📄 **Full page content extraction** — JavaScript-rendered sites converted to clean Markdown
+- 🔍 **Browser-based web search** — Bing via Playwright (stealth user-agent), no API keys needed
+- 📄 **Full page content extraction** — JavaScript-rendered sites converted to clean Markdown via Readability + Turndown
 - 📸 **Screenshots** — capture full or viewport screenshots for visual analysis
 - 🖱️ **Interactive navigation** — click elements, fill forms, follow links
-- 🔌 **Replaceable search backend** — swap DuckDuckGo for Tavily, Brave, Exa, or any search API
-- 🤖 **Works with any MCP-compatible AI assistant** — Copilot CLI, Claude Code, Codex, and more
+- 🔌 **Replaceable search backend** — swap Bing for any search API by implementing the `SearchEngine` interface
+- 🤖 **Works with any MCP-compatible AI assistant** — Copilot CLI, Claude Code, Codex, VS Code, and more
+- 📝 **Structured logging** — all operations logged to stderr with timestamps, durations, and error context
+- 🧩 **Research workflow prompt** — built-in `deep-research` prompt guides the host LLM through a complete multi-step research workflow
+
+## Design
+
+### How It Works
+
+This project is an **MCP server** — it does **not** include its own LLM. Instead, it exposes browser-based research tools that a host AI assistant (Copilot CLI, Claude Code, Codex) orchestrates. The host LLM decides what to search, which pages to visit, and how to synthesize findings.
+
+```
+┌────────────────────────────────────────────────────────────┐
+│  Host LLM (Copilot CLI / Claude Code / Codex)              │
+│  - Decides what to search, which pages to read             │
+│  - Synthesizes findings into reports                       │
+│  - Uses the deep-research prompt for guided workflows      │
+└──────────┬─────────────────────────────────────────────────┘
+           │ MCP Protocol (stdio)
+           ▼
+┌────────────────────────────────────────────────────────────┐
+│  Deep Research Agent (this server)                          │
+│                                                            │
+│  Tools Layer          Services Layer                       │
+│  ┌──────────────┐    ┌──────────────────────────────────┐  │
+│  │ web_search   │───▶│ SearchService                    │  │
+│  │ visit_page   │    │  └─ BingSearchEngine (default)   │  │
+│  │ screenshot   │───▶│  └─ DuckDuckGoEngine (alt)       │  │
+│  │ click_element│    │  └─ YourCustomEngine (plug in)   │  │
+│  │ get_links    │───▶│ BrowserService (Playwright)      │  │
+│  │ list_pages   │    │  └─ Stealth user-agent           │  │
+│  │ close_page   │    │  └─ Page lifecycle management    │  │
+│  └──────────────┘    │ ContentExtractor                  │  │
+│                      │  └─ Readability + Turndown        │  │
+│  Prompts Layer       │  └─ JSDOM (quiet virtual console) │  │
+│  ┌──────────────┐    └──────────────────────────────────┘  │
+│  │deep-research │    Logger (stderr, structured JSON)      │
+│  └──────────────┘                                          │
+└────────────────────────────────────────────────────────────┘
+           │
+           ▼
+┌────────────────────────────────────────────────────────────┐
+│  Chromium (headless, auto-installed by Playwright)          │
+│  └─ Bing search, page rendering, screenshots               │
+└────────────────────────────────────────────────────────────┘
+```
+
+### Key Design Decisions
+
+| Decision | Rationale |
+|----------|-----------|
+| **MCP server, not standalone agent** | Universal compatibility — works with any MCP host (Copilot, Claude Code, Codex). The host LLM does the reasoning. |
+| **Bing as default search engine** | DuckDuckGo serves CAPTCHAs to headless browsers. Google blocks by IP. Bing works reliably with a stealth user-agent. |
+| **Stealth user-agent** | Search engines detect `HeadlessChrome`. We set `Chrome/131.0.0.0` + realistic viewport/locale to avoid bot detection. |
+| **Replaceable search backend** | The `SearchEngine` interface lets you swap Bing for any API (Tavily, Brave, Exa) with a single class change. |
+| **No LLM API dependency** | The host provides the LLM. Zero API keys, zero cost, works offline (except for web access). |
+| **Readability + Turndown** | Mozilla Readability strips boilerplate, Turndown converts to Markdown — clean content for LLM consumption. |
+| **Structured logging to stderr** | Stdout is reserved for MCP protocol. All logs go to stderr with `[timestamp] [LEVEL] [component] message {metadata}`. |
 
 ## Quick Install
 
@@ -68,20 +124,22 @@ Use the generic MCP server configuration:
 }
 ```
 
+### Environment Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LOG_LEVEL` | `info` | Logging verbosity: `debug`, `info`, `warn`, `error` |
+
 ## Available Tools
 
 ### `web_search`
 
-Search the web using DuckDuckGo. Returns titles, URLs, and snippets.
+Search the web using Bing. Returns titles, URLs, and snippets.
 
 | Parameter      | Type   | Required | Default | Description              |
 | -------------- | ------ | -------- | ------- | ------------------------ |
 | `query`        | string | yes      | —       | Search query             |
 | `num_results`  | number | no       | 10      | Number of results to return |
-
-```json
-{ "query": "Rust async runtime comparison 2025", "num_results": 5 }
-```
 
 ### `visit_page`
 
@@ -92,10 +150,6 @@ Visit a URL and extract the page content as Markdown. Renders JavaScript before 
 | `url`            | string  | yes      | —       | URL to visit                 |
 | `extract_links`  | boolean | no       | false   | Also return an array of links |
 
-```json
-{ "url": "https://docs.rust-lang.org/book/", "extract_links": true }
-```
-
 ### `take_screenshot`
 
 Capture a screenshot of a page as a base64-encoded PNG.
@@ -105,10 +159,6 @@ Capture a screenshot of a page as a base64-encoded PNG.
 | `url`        | string  | yes      | —       | URL to screenshot              |
 | `full_page`  | boolean | no       | false   | Capture the full scrollable page |
 
-```json
-{ "url": "https://example.com", "full_page": true }
-```
-
 ### `click_element`
 
 Click an element on an already-open page using a CSS selector.
@@ -117,10 +167,6 @@ Click an element on an already-open page using a CSS selector.
 | ----------- | ------ | -------- | ------------------------------ |
 | `page_id`   | string | yes      | ID of an open page             |
 | `selector`  | string | yes      | CSS selector of the element    |
-
-```json
-{ "page_id": "a1b2c3", "selector": "button.submit" }
-```
 
 ### `get_page_links`
 
@@ -163,33 +209,28 @@ The prompt guides the assistant through a structured workflow:
 6. **Synthesize** findings into a coherent answer
 7. **Report** with inline citations and a source list
 
-## Architecture
+## Project Structure
 
 ```
 src/
-├── index.ts                    # Entry point (stdio transport)
-├── server.ts                   # MCP server initialization
-├── tools/                      # MCP tool definitions
-│   ├── web-search.ts
-│   ├── visit-page.ts
-│   ├── take-screenshot.ts
-│   └── page-actions.ts         # click, links, list, close
+├── index.ts                        # Entry point — shebang, stdio transport, signal handlers
+├── server.ts                       # MCP server wiring — creates services, registers tools/prompts
+├── logger.ts                       # Structured logger (stderr, level-based, JSON metadata)
+├── tools/
+│   ├── web-search.ts               # web_search tool
+│   ├── visit-page.ts               # visit_page tool
+│   ├── take-screenshot.ts          # take_screenshot tool
+│   └── page-actions.ts             # click_element, get_page_links, list_open_pages, close_page
 ├── prompts/
-│   └── research-workflow.ts    # deep-research prompt
+│   └── research-workflow.ts        # deep-research prompt (7-step guided workflow)
 └── services/
-    ├── browser.ts              # Playwright browser management
-    ├── search-engine.ts        # SearchEngine interface
-    ├── content-extractor.ts    # HTML → Markdown extraction
+    ├── browser.ts                  # Playwright browser lifecycle + stealth settings
+    ├── search-engine.ts            # SearchEngine interface + SearchService wrapper
+    ├── content-extractor.ts        # HTML → Markdown (Readability + Turndown + quiet JSDOM)
     └── search-backends/
-        └── duckduckgo.ts       # Default search implementation
+        ├── bing.ts                 # Default — Bing search with URL redirect decoding
+        └── duckduckgo.ts           # Alternative — DuckDuckGo (may CAPTCHA in some environments)
 ```
-
-The codebase follows a layered architecture:
-
-- **Services** — core capabilities (browser automation, search, content extraction)
-- **Tools** — thin MCP tool registrations that delegate to services
-- **Prompts** — reusable research workflow templates
-- **Search backends** — pluggable search engine implementations behind a common interface
 
 ## Custom Search Backend
 
@@ -214,6 +255,42 @@ class MyCustomSearch implements SearchEngine {
   }
 }
 ```
+
+Then update `src/server.ts` to use your backend:
+
+```typescript
+const searchEngine = new MyCustomSearch();  // instead of BingSearchEngine
+```
+
+## Known Issues & Remaining Work
+
+### Search Engine Reliability
+
+| Engine | Status | Notes |
+|--------|--------|-------|
+| **Bing** (default) | ✅ Works | Reliable with stealth user-agent. URLs decoded from Bing redirects. |
+| **DuckDuckGo** | ⚠️ CAPTCHAs | Serves "select all ducks" CAPTCHA to headless browsers. Kept as alternative. |
+| **Google** | ❌ Blocked | Blocks headless Chrome by IP (`/sorry/` redirect). Not implemented. |
+
+Bing may eventually start blocking headless browsers too. The replaceable backend architecture makes it easy to switch to a paid search API when needed.
+
+### Not Yet Implemented
+
+- **npm publish** — The package is not yet published to npm. Currently install from source. Run `npm publish` to make `npx -y deep-research-agent` work globally.
+- **Parallel sub-question execution** — The `deep-research` prompt instructs the host LLM to research sequentially. Parallel tool calls depend on the host's multi-tool-call support.
+- **Session persistence** — Browser pages are lost when the server restarts. No cross-session memory.
+- **Token/cost budgeting** — No mechanism to limit how many pages the host LLM visits or how much content it extracts.
+- **Rate limiting** — No throttling between rapid Bing searches. Heavy use may trigger Bing bot detection.
+- **Authentication support** — Cannot log into sites that require authentication.
+- **PDF/document extraction** — Only HTML pages are supported. PDFs, Word docs, etc. are not extracted.
+- **Vector store / long-term memory** — No semantic storage of past research findings.
+
+### Operational Notes
+
+- **First tool call is slow (~3-8s)** — Chromium browser launch happens lazily on first use. Subsequent calls reuse the browser instance.
+- **`networkidle` wait strategy** — `visit_page` and `take_screenshot` wait for network idle, which can be slow on heavy sites. Consider adding a timeout parameter.
+- **Stderr logging** — All logs go to stderr (stdout is MCP protocol). Set `LOG_LEVEL=debug` for full detail, `LOG_LEVEL=error` for quiet operation.
+- **JSDOM CSS warnings suppressed** — Modern CSS (`:has()`, nesting) triggers harmless `Could not parse CSS stylesheet` errors in JSDOM. These are silenced via `VirtualConsole`.
 
 ## Development
 
